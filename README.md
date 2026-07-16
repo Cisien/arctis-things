@@ -269,3 +269,209 @@ Omni device definitions. It is deliberately not applied to other Arctis
 families: GG also contains distinct `SSFWFIZZ`, `SSFWARCTISNOVA7GEN2`, Nova
 Pro Wireless, `SSFWWITHMODE`, and legacy update handlers with different
 metadata layouts, block sizes, acknowledgements, or bootloader behavior.
+
+
+# Arctis Nova Pro Omni / Nova Elite EQ tool
+
+`arctis-nova-elite-eq.py` applies one GG parametric-EQ model to the
+2.4 GHz/radio EQ stored by a supported SteelSeries base station. It is a
+standalone research tool: it does not install or start SteelSeries GG, modify
+Linux Arctis Manager, or update firmware.
+
+It consumes JSON exported by `steelseries-gg-eq-preset-extract.py` from a
+local SteelSeries GG installer. The two scripts can remain outside a Linux
+Arctis Manager checkout.
+
+> [!Warning]
+>
+> A live `apply --yes-apply` command changes the selected on-device radio EQ
+> slot immediately. Stop Linux Arctis Manager, SteelSeries GG, and other
+> headset-control programs first. Keep the base station connected by USB and
+> do not disconnect it while the report is being sent.
+
+## Scope
+
+Supported base stations:
+
+| Device | USB ID | Tool selector |
+| --- | --- | --- |
+| Arctis Nova Pro Omni | `1038:2290` | `omni` |
+| Arctis Nova Elite | `1038:2244` | `elite` |
+| Arctis Nova Elite SNG | `1038:2270` | `elite-sng` |
+
+The default `--device auto` detects exactly one of these base stations. The
+tool applies only the shared 2.4 GHz/radio **parametric** EQ. It does not
+write Bluetooth or microphone EQ: those destinations are fixed-band,
+gain-only formats and cannot reproduce a GG parametric game preset exactly.
+
+The directly connected headset receiver is not an EQ target for this tool.
+
+## Requirements
+
+- Python 3.10 or newer.
+- Python `pyusb` and a working libusb backend for `probe` or a live apply.
+- Permission to claim the base station's vendor-HID interface. On a normal
+  Linux system, use `sudo -E` for `probe` and a live apply.
+- A GG preset JSON file. Generate one with the adjacent extractor:
+
+  ```sh
+  python3 steelseries-gg-eq-preset-extract.py --quiet --output gg-eq-presets.json
+  ```
+
+No USB access, root access, or PyUSB installation is needed to list, show, or
+dry-run a preset.
+
+## Quick start
+
+Run from the directory containing the scripts and the generated preset file.
+
+```sh
+# Check the pure JSON-to-HID encoder without a device.
+python3 arctis-nova-elite-eq.py self-test
+
+# Find candidate presets.
+python3 arctis-nova-elite-eq.py list --filter forza
+
+# Print the original exported JSON for one preset.
+python3 arctis-nova-elite-eq.py show --preset 'Forza Horizon 5'
+
+# Validate and display the exact radio-EQ plan. This is a dry run.
+python3 arctis-nova-elite-eq.py apply --preset 'Forza Horizon 5'
+
+# Confirm that the connected base exposes the expected vendor-HID report.
+sudo -E python3 arctis-nova-elite-eq.py probe
+
+# Perform the write only after reviewing the dry run.
+sudo -E python3 arctis-nova-elite-eq.py \
+  apply --preset 'Forza Horizon 5' --yes-apply
+```
+
+`apply` is always a dry run unless `--yes-apply` is present. A dry run never
+opens or claims a USB interface.
+
+## Selecting a preset file and device
+
+The default input is `gg-eq-presets.json` in the current directory. Use
+`--preset-file` with an alternative exported catalogue or a single preset
+object:
+
+```sh
+python3 arctis-nova-elite-eq.py \
+  apply --preset-file /path/to/gg-eq-presets.json --preset 'Apex Legends'
+
+# Use a specific hardware family instead of automatic detection.
+sudo -E python3 arctis-nova-elite-eq.py \
+  apply --device omni --preset 'Apex Legends' --yes-apply
+```
+
+`--preset` accepts an exact display name, alias, UUID, or a unique partial
+name. An ambiguous partial match fails and prints the candidate names; it
+never guesses which preset to write.
+
+## On-device slots
+
+GG does not store arbitrary game curves in the built-in Flat/Bass/Focus/Smiley
+slots. The default `--slot auto` follows GG's own mapping:
+
+| GG model | Device slot |
+| --- | --- |
+| `Flat` | `flat` (0) |
+| `Bass Boost` | `bass-boost` (1) |
+| `Focus` | `focus` (2) |
+| `Smiley` | `smiley` (3) |
+| GG custom model (`preset_type: 1`) | `custom` (4) |
+| Other game/device models | `game` (5) |
+
+Use an explicit slot to save a game curve in the Custom slot instead:
+
+```sh
+sudo -E python3 arctis-nova-elite-eq.py \
+  apply --preset 'Forza Horizon 5' --slot custom --yes-apply
+```
+
+`--name` changes the stored long name (maximum 61 UTF-8 bytes), and `--alias`
+changes its short name (maximum 6 UTF-8 bytes).
+
+## Model format and conversion
+
+The tool accepts an exported GG row such as:
+
+```json
+{
+  "display_name": "Example curve",
+  "alias_name": "EXAMP",
+  "preset_type": 0,
+  "eq_preset_data": {
+    "filter1": {
+      "enabled": true,
+      "frequency": 100.0,
+      "gain": 6.0,
+      "qFactor": 0.707,
+      "type": "peakingEQ"
+    }
+  }
+}
+```
+
+All ten filters (`filter1` through `filter10`) are required. The supported
+filter types are `peakingEQ`, `lowPass`, `highPass`, `lowShelving`, and
+`highShelving`.
+
+The radio hardware stores each filter as six bytes:
+
+| GG property | Device encoding |
+| --- | --- |
+| `frequency` | unsigned 16-bit little-endian Hz, 20–20,001 |
+| `type` | 1=peak, 2=low-pass, 3=high-pass, 4=low-shelf, 5=high-shelf |
+| `gain` | signed byte, decibels × 10, range −12.0 to +12.0 dB |
+| `qFactor` | unsigned 16-bit little-endian, Q × 1000, range 0.2–10 |
+| `enabled: false` | frequency `20,001`, GG's disabled-band sentinel |
+
+Non-integer frequency, gain, and Q values are truncated to the hardware's
+integer representation using the same scaling in GG's decoded payload recipe.
+The dry-run output shows the final encoded values.
+
+The complete radio write is a 130-byte meaningful payload in HID feature
+report 1: report ID, command `0x1b`, selected slot, six-byte alias,
+61-byte name, and ten packed filters. The kernel pads it to the base's
+feature-report length.
+
+## Catalogue compatibility
+
+The tool validates every filter before a USB write. In the GG 114.0.0
+catalogue, 381 of 382 exported models fit this protocol. The exception is
+`DOOM: The Dark Ages`, which uses `notchFilter`; that type has no Omni/Nova
+Elite radio hardware equivalent, so the tool refuses it rather than silently
+substituting a different filter.
+
+GG marks microphone-only models with `supported_mode: 4`. They are rejected by
+default because a microphone curve is not normally suitable for radio output.
+If that is intentional, add `--allow-mic-model`; this still writes the model
+to the radio EQ, never to the microphone EQ.
+
+## Verification and troubleshooting
+
+`probe` is a read-only compatibility check. It claims the preferred HID
+control interface, reads its report descriptor, and reports the available
+input/output/feature report sizes. A compatible base needs feature report ID
+1 large enough for the 130-byte model; current Omni/Elite bases expose the
+much larger 1036-byte physical report.
+
+The write protocol has no acknowledgement or read-back in GG's device
+definition. Therefore, `Radio EQ applied successfully` means that the
+operating system accepted the complete HID feature report; it is not a
+separate persistence verification. Confirm the selected name/curve on the
+base station or in GG if independent confirmation is needed.
+
+| Symptom | Action |
+| --- | --- |
+| `PyUSB is required` | Install the `pyusb` package for the Python interpreter being used. |
+| No supported base station is connected | Connect the base directly by USB and check `lsusb` for one of the supported IDs. |
+| Cannot open the HID interface | Stop headset-control software and retry `probe` or apply with `sudo -E`. |
+| Preset selector is ambiguous | Use the complete display name or the UUID shown by `list`. |
+| Model is microphone-only | Select a radio/game model, or explicitly add `--allow-mic-model`. |
+| Unsupported filter type | The target hardware cannot reproduce that curve exactly; choose another model. |
+
+Do not run this tool while a firmware updater is operating on the same base
+station.
+
