@@ -76,7 +76,8 @@ persisting it.
 
 # Arctis Nova Pro Omni firmware updater
 
-THIS SCRIPT IS EXPERIMENTAL! USE AT YOUR OWN RISK!
+> [!CAUTION]
+> THIS SCRIPT IS EXPERIMENTAL AND INTENDED FOR REFERENCE USE ONLY! USE AT YOUR OWN RISK!
 
 `arctis-omni-firmware-update.py` is a standalone Linux firmware updater for
 the SteelSeries Arctis Nova Pro Omni. It reproduces the
@@ -88,7 +89,7 @@ local SteelSeries GG 114.0.0 installer. It does not download firmware and
 will refuse images whose size or SHA-256 hash does not match the values
 compiled into the script.
 
-> **Warning**
+> [!WARNING]
 >
 > Firmware flashing erases the selected component before writing its
 > replacement. Keep the relevant USB device connected, do not suspend or
